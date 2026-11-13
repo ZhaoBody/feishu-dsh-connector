@@ -82,9 +82,13 @@ cp bridge/.env.example bridge/.env
 
 ### 4. 启动
 
+开发时直接跑：
+
 ```bash
 cd bridge && pnpm start
 ```
+
+生产环境请用 systemd 托管（进程独立于 dsh、崩溃自动拉起、开机自启）：见 **[docs/deploy-systemd.md](docs/deploy-systemd.md)**。
 
 ### 5. 注册会话可见性插件（可选）
 
