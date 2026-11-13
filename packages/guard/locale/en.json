@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Feishu Session Guard",
+    "description": "Blocks tool calls from Feishu-originated sessions when they touch credential categories (SSH keys, private certs, .env and other secret files, system account files). Does not affect your own Web sessions."
+  }
+}

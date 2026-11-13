@@ -1,0 +1,6 @@
+# 飞书会话防护：按类别拦截凭证/密钥/系统账户类文件，只对 feishu- 前缀的会话生效。
+- insert:
+    - id: feishu-guard
+      name: '@local/feishu-guard'
+      config:
+        sessionPrefix: feishu-

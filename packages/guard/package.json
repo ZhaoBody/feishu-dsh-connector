@@ -1,0 +1,36 @@
+{
+  "name": "@local/feishu-guard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "对飞书来源的会话按文件类别拦截工具调用：凭证、密钥、系统账户文件一律不许碰。",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./lib/*.js": "./lib/*.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZhaoBody/feishu-dsh-connector.git",
+    "directory": "packages/guard"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}
