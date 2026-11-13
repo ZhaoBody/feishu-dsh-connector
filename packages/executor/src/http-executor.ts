@@ -231,6 +231,8 @@ export class HttpExecutor implements Executor {
       for (const record of page.records ?? []) {
         const event = record.event;
         if (event?.type !== 'assistant/message') continue;
+        // page 返回的是「最近 N 条」，包含本轮之前的旧消息；只认 baseline 之后的。
+        if ((event.seq ?? 0) <= baseline) continue;
         const next = extractAssistantText(event.data);
         // 轮询会重复读到同一事件：文本没变就不再推 delta。
         if (next.length > 0 && next !== text) {
@@ -238,7 +240,10 @@ export class HttpExecutor implements Executor {
           onDelta(text);
         }
       }
-      const finished = (page.records ?? []).some((record) => record.event?.type === 'turn/end');
+      // 同样要按 baseline 过滤：page 含上一轮的 turn/end，不过滤会被旧回合误判完成。
+      const finished = (page.records ?? []).some(
+        (record) => record.event?.type === 'turn/end' && (record.event?.seq ?? 0) > baseline,
+      );
       if (finished) return { text, done: true };
       if (text.length > 0 && item?.running === false) return { text, done: true };
     }
