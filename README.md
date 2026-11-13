@@ -102,14 +102,22 @@ plugin_manager install_bundle --target /absolute/path/to/packages/registrar
 
 ## 安全须知
 
-**执行体能在这台机器上跑命令。** 上线前必须配置：
+**执行体能在这台机器上读文件。** 上线前必须配置白名单：
 
 ```bash
-FEISHU_ALLOWED_USERS=ou_xxx          # 白名单，不配等于群成员都能用
-DSH_PERMISSION_MODE=workspace-write  # 沙箱边界，越界写会被拒
+FEISHU_ALLOWED_USERS=ou_xxx   # 非白名单用户在进 agent 之前就被拒
 ```
 
-SDK 运行时没有审批 UI，需要审批的操作会 **fail closed（直接拒绝）**，不会挂起。
+白名单之外，`packages/guard` 插件再对飞书会话做一层工具级约束：
+
+| 类别 | 处理 |
+|---|---|
+| 写文件（`write`/`edit`） | 拒绝——飞书会话严格只读 |
+| 执行命令（`bash`/`terminal_*`） | 拒绝——无法静态保证只读 |
+| 读文件 | 绝对路径必须在项目工作区内；含 `..` 直接拒绝 |
+| 提问/定时/待办 | 放行 |
+
+`feishu-` 前缀以外的会话（也就是你自己的 Web 会话）完全不受影响。
 
 ## 开发
 

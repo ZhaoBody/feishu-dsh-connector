@@ -28,8 +28,7 @@ WorkingDirectory=/absolute/path/to/feishu/bridge
 # 凭证与工作区；EnvironmentFile 里一行一个 KEY=VALUE，不要 export 前缀
 EnvironmentFile=%h/.dsh/feishu-assistant.env
 
-# 权限与白名单（生产必配）
-Environment=DSH_PERMISSION_MODE=workspace-write
+# 白名单（生产必配）：非白名单用户在进 agent 之前就被拒
 Environment=FEISHU_ALLOWED_USERS=ou_xxxxxxxxxxxxxxxx
 Environment=DSH_WORKSPACE=/absolute/path/to/feishu-assistant-workspace
 
@@ -110,7 +109,17 @@ journalctl --user -u feishu-bridge -n 100 --since "1 hour ago"
 
 该文件有 5MB 滚动（保留一份 `.1`），不会无限增长。
 
-## 6. 自愈机制
+## 6. 权限边界
+
+执行体现在跑在 dsh web 进程里（HTTP API 驱动），**不再有独立沙箱**。飞书会话的约束由 `feishu-guard` 插件在工具层落实：
+
+- 写文件、执行命令：拒绝（严格只读）
+- 读文件：绝对路径必须在项目工作区内，含 `..` 直接拒绝
+- 只对 `feishu-` 前缀的会话生效，你自己的 Web 会话不受影响
+
+所以这份服务文件里**不需要** `DSH_PERMISSION_MODE`——那是旧架构（独立子进程）的配置。
+
+## 7. 自愈机制
 
 服务里有两层兜底，不需要外部看门狗：
 
@@ -121,7 +130,7 @@ journalctl --user -u feishu-bridge -n 100 --since "1 hour ago"
 
 为什么要这层：飞书 SDK 在 DNS 抖动、网络切换后会重试有限次，**耗尽后不会自己恢复**——进程活着但再也收不到消息。应用内检测到 `failed` 主动退出，是最省事的解法。
 
-## 7. 常见问题
+## 8. 常见问题
 
 | 现象 | 排查 |
 |---|---|
