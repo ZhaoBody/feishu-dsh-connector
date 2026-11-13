@@ -69,22 +69,24 @@ cd feishu-dsh-connector
 pnpm install            # 四个包共用一个 workspace
 ```
 
-### 2. 配置
+### 2. 建一个飞书机器人
+
+还没建过飞书应用的话，照 **[docs/setup-feishu-app.md](docs/setup-feishu-app.md)** 走一遍：创建应用 → 开机器人能力 → 勾权限 → 事件订阅选「长连接」并订阅 `im.message.receive_v1` → 发布 → 拉进群。
+
+### 3. 配置
 
 ```bash
 cp bridge/.env.example bridge/.env
 # 填 FEISHU_APP_ID / FEISHU_APP_SECRET / DSH_WORKSPACE / FEISHU_ALLOWED_USERS
 ```
 
-飞书开放平台要求：机器人能力、长连接事件订阅（`im.message.receive_v1`）、发送消息权限。
-
-### 3. 启动
+### 4. 启动
 
 ```bash
 cd bridge && pnpm start
 ```
 
-### 4. 注册会话可见性插件（可选）
+### 5. 注册会话可见性插件（可选）
 
 飞书会话默认只存在于 `sdk` profile，dsh Web 侧边栏看不到。装上 registrar 就能看见：
 
