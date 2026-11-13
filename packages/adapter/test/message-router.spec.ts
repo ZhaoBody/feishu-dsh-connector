@@ -23,10 +23,10 @@ describe('message-router 分拣', () => {
     assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
   });
 
-  it('闲聊留在主会话', () => {
+  it('闲聊也进本人会话（保证追问上下文连续）', () => {
     const decision = route(message('今天天气怎么样？'));
     assert.equal(decision.intent, 'chat');
-    assert.equal(decision.key, mainKeyOf('oc_group'));
+    assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
   });
 
   it('中断指令只命中说话人', () => {
@@ -58,10 +58,12 @@ describe('message-router 分拣', () => {
     assert.equal(route(message('今天天气怎么样？')).intent, 'chat');
   });
 
-  it('整句问候/致谢留在主会话', () => {
-    assert.equal(route(message('你好')).intent, 'chat');
-    assert.equal(route(message('谢谢！')).intent, 'chat');
-    assert.equal(route(message('嗯')).intent, 'chat');
+  it('整句问候/致谢进本人会话', () => {
+    for (const text of ['你好', '谢谢！', '嗯']) {
+      const decision = route(message(text));
+      assert.equal(decision.intent, 'chat');
+      assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
+    }
   });
 
   it('白名单不抢动作句：谢谢 + 改文件仍转执行体', () => {

@@ -8,7 +8,7 @@
  */
 
 import type { ActorKey, RunImage } from '@feishu-assistant/dsh-executor/contract';
-import { actorKeyOf, mainKeyOf } from './keys.ts';
+import { actorKeyOf } from './keys.ts';
 
 /** 已落盘的入站文件。 */
 export interface InboundFile {
@@ -115,14 +115,16 @@ export function route(message: InboundMessage): RouteDecision {
     return { intent: 'task', key: speakerKey, reason: '含上下文指代，主会话没有那段上下文' };
   }
 
+  // 闲聊与短句也进说话人自己的会话：共享主会话会让「追问」掉进另一段上下文，
+  // 出现「你先说 1 我再回答」这种答非所问。一人一会话，上下文才连续。
   for (const pattern of CHITCHAT_PATTERNS) {
     if (pattern.test(text)) {
-      return { intent: 'chat', key: mainKeyOf(message.chatId), reason: '整句命中闲聊白名单' };
+      return { intent: 'chat', key: speakerKey, reason: '整句命中闲聊白名单（仍走本人会话）' };
     }
   }
 
   if (text.length <= CHITCHAT_MAX_LENGTH) {
-    return { intent: 'chat', key: mainKeyOf(message.chatId), reason: '短句且无动作词，留在主会话' };
+    return { intent: 'chat', key: speakerKey, reason: '短句且无动作词（仍走本人会话）' };
   }
 
   // 兜底：未识别的长句一律转执行体。主会话的职责是「随手回一句」，不是「处理未知请求」。

@@ -123,14 +123,14 @@ function setup(logger?: { info(message: string): void; warn(message: string): vo
 }
 
 describe('FeishuAdapter 接线', () => {
-  it('闲聊走主会话，任务走个人执行体', async () => {
+  it('闲聊与任务都进本人执行体（上下文连续）', async () => {
     const { adapter, connection, executor, dir } = setup();
     await adapter.start();
 
     await connection.deliver(inbound('今天天气怎么样？'));
     await connection.deliver(inbound('帮我改一下配置'));
 
-    assert.equal(executor.runs[0]?.key, 'oc_group::__main__');
+    assert.equal(executor.runs[0]?.key, 'oc_group::ou_alice');
     assert.equal(executor.runs[1]?.key, 'oc_group::ou_alice');
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
