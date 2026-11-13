@@ -8,7 +8,7 @@
  */
 
 import type { ActorKey, RunImage } from '@feishu-assistant/dsh-executor/contract';
-import { actorKeyOf } from './keys.ts';
+import { actorKeyOf, mainKeyOf } from './keys.ts';
 
 /** 已落盘的入站文件。 */
 export interface InboundFile {
@@ -98,39 +98,39 @@ export function route(message: InboundMessage): RouteDecision {
   }
 
   if (message.images !== undefined && message.images.length > 0) {
-    return { intent: 'task', key: speakerKey, reason: '带图片输入，转执行体处理' };
+    return { intent: 'task', key: mainKeyOf(message.chatId), reason: '带图片 → 主对话' };
   }
 
   if (message.files !== undefined && message.files.length > 0) {
-    return { intent: 'task', key: speakerKey, reason: '带文件输入，转执行体处理' };
+    return { intent: 'task', key: mainKeyOf(message.chatId), reason: '带文件 → 主对话' };
   }
 
+  // 任务请求也先进主对话：由主对话判断并决定是否派活（派活由它输出标记触发）。
   for (const pattern of ACTION_PATTERNS) {
     if (pattern.test(text)) {
-      return { intent: 'task', key: speakerKey, reason: '命中动作词，转出主会话' };
+      return { intent: 'task', key: mainKeyOf(message.chatId), reason: '动作词 → 主对话（由它派活）' };
     }
   }
 
   if (REFERENCE_PATTERN.test(text)) {
-    return { intent: 'task', key: speakerKey, reason: '含上下文指代，主会话没有那段上下文' };
+    return { intent: 'task', key: mainKeyOf(message.chatId), reason: '含指代 → 主对话' };
   }
 
-  // 闲聊与短句也进说话人自己的会话：共享主会话会让「追问」掉进另一段上下文，
-  // 出现「你先说 1 我再回答」这种答非所问。一人一会话，上下文才连续。
+  // 所有消息都进 chat 级主对话：主对话是唯一持记忆的主体，负责接话、判断、派活。
   for (const pattern of CHITCHAT_PATTERNS) {
     if (pattern.test(text)) {
-      return { intent: 'chat', key: speakerKey, reason: '整句命中闲聊白名单（仍走本人会话）' };
+      return { intent: 'chat', key: mainKeyOf(message.chatId), reason: '闲聊 → 主对话' };
     }
   }
 
   if (text.length <= CHITCHAT_MAX_LENGTH) {
-    return { intent: 'chat', key: speakerKey, reason: '短句且无动作词（仍走本人会话）' };
+    return { intent: 'chat', key: mainKeyOf(message.chatId), reason: '短句 → 主对话' };
   }
 
   // 兜底：未识别的长句一律转执行体。主会话的职责是「随手回一句」，不是「处理未知请求」。
   return {
     intent: 'task',
-    key: speakerKey,
-    reason: '未命中闲聊特征，按偏安全默认转专属执行体',
+    key: mainKeyOf(message.chatId),
+    reason: '未命中闲聊特征 → 主对话',
   };
 }

@@ -5,12 +5,13 @@
  * 不知道执行体是进程还是 session，也不 import 任何执行层实现。
  */
 
-import type { Executor, ExecutorEvent } from '@feishu-assistant/dsh-executor/contract';
+import type { ActorKey, Executor, ExecutorEvent } from '@feishu-assistant/dsh-executor/contract';
 
 import { route, type InboundMessage, type RouteDecision } from './message-router.ts';
 import type { MessageHandler } from './lark-connection.ts';
 import type { OutboundKind, OutboundRegistry } from './outbound-registry.ts';
 import { RecallService, type RecallResult } from './recall-service.ts';
+import { mainActorBrief, parseSpawn } from './dispatch.ts';
 import { ReplyCollector } from './reply-renderer.ts';
 import type { CardTransport } from './streaming-card.ts';
 import { StreamingCard } from './streaming-card.ts';
@@ -71,6 +72,9 @@ export class FeishuAdapter {
   private readonly cardThrottleMs: number;
   private readonly allowedUsers: readonly string[] | undefined;
   private readonly liveCards = new Set<StreamingCard>();
+  /** 已经注入过角色说明的主对话（每个 chat 一次）。 */
+  private readonly briefed = new Set<string>();
+  private taskSeq = 0;
   private unbind: (() => void) | undefined;
   private started = false;
 
@@ -204,10 +208,16 @@ export class FeishuAdapter {
     };
 
     const startedAt = this.now();
+    let text = this.composeText(message);
+    // 每个主对话首次交互时注入角色说明，之后它记住了。
+    if (!this.briefed.has(message.chatId)) {
+      this.briefed.add(message.chatId);
+      text = `${mainActorBrief()}\n\n---\n\n${text}`;
+    }
     const result = await this.executor.run(
       decision.key,
       {
-        text: this.composeText(message),
+        text,
         ...(message.images !== undefined ? { images: message.images } : {}),
       },
       sink,
@@ -215,16 +225,64 @@ export class FeishuAdapter {
     this.logger.info(
       `执行 key=${decision.key} ok=${result.ok} 耗时=${this.now() - startedAt}ms 长度=${result.text.length}`,
     );
-    const snapshot = collector.snapshot;
-    const text = snapshot.text;
-    const phase = result.ok ? 'done' : 'error';
+
+    // 失败：把错误原样交给用户（卡片红色终态或纯文本）。
+    if (!result.ok) {
+      const failure = collector.snapshot.text;
+      if (card !== undefined) {
+        await card.close(failure, 'error');
+        this.liveCards.delete(card);
+        return;
+      }
+      await this.send(message.chatId, message.messageId, failure, 'text');
+      return;
+    }
+
+    // 成功：解析派活标记。正文之外的任务另开无状态会话并行执行。
+    const parsed = parseSpawn(result.text);
+    for (const task of parsed.tasks) {
+      this.logger.info(`主对话派活：${task.slice(0, 60)}`);
+      this.spawnTask(message.chatId, decision.key, message.messageId, task);
+    }
+    const visible = parsed.text.length > 0 ? parsed.text : parsed.tasks.length > 0 ? '收到，已经派人去办了。' : '';
 
     if (card !== undefined) {
-      await card.close(text, phase);
+      await card.close(visible, 'done');
       this.liveCards.delete(card);
       return;
     }
-    await this.send(message.chatId, message.messageId, text, 'text');
+    if (visible.length > 0) {
+      await this.send(message.chatId, message.messageId, visible, 'text');
+    }
+  }
+
+  /**
+   * 派活：另开无状态会话执行，完成后把结果注回主对话再回复用户。
+   *
+   * 不阻塞接入层——主对话派完就能接下一句话。
+   */
+  private spawnTask(chatId: string, mainKey: ActorKey, replyTo: string, task: string): void {
+    const taskKey = `${chatId}::__task-${++this.taskSeq}` as ActorKey;
+    void (async () => {
+      const collector = new ReplyCollector();
+      const result = await this.executor.run(taskKey, { text: task }, {
+        emit: (event: ExecutorEvent) => collector.onEvent(event),
+      });
+      const outcome = result.ok ? result.text : `执行失败：${result.text}`;
+      // 结果注回主对话：它持记忆，由它决定怎么转述给用户。
+      const followup = new ReplyCollector();
+      const injected = await this.executor.run(
+        mainKey,
+        { text: `【执行体回报】任务：${task}\n结果：${outcome}` },
+        { emit: (event: ExecutorEvent) => followup.onEvent(event) },
+      );
+      const text = injected.ok ? parseSpawn(followup.snapshot.text).text : `⚠️ ${outcome}`;
+      try {
+        await this.send(chatId, replyTo, text.length > 0 ? text : outcome, 'text');
+      } catch (error) {
+        this.logger.warn(`派活结果回发失败：${String(error)}`);
+      }
+    })();
   }
 
   /**

@@ -20,13 +20,13 @@ describe('message-router 分拣', () => {
   it('强指令动词转给说话人自己的执行体', () => {
     const decision = route(message('帮我改一下这个文件'));
     assert.equal(decision.intent, 'task');
-    assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
+    assert.equal(decision.key, mainKeyOf('oc_group'));
   });
 
-  it('闲聊也进本人会话（保证追问上下文连续）', () => {
+  it('闲聊进 chat 级主对话', () => {
     const decision = route(message('今天天气怎么样？'));
     assert.equal(decision.intent, 'chat');
-    assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
+    assert.equal(decision.key, mainKeyOf('oc_group'));
   });
 
   it('中断指令只命中说话人', () => {
@@ -58,11 +58,11 @@ describe('message-router 分拣', () => {
     assert.equal(route(message('今天天气怎么样？')).intent, 'chat');
   });
 
-  it('整句问候/致谢进本人会话', () => {
+  it('整句问候/致谢进主对话', () => {
     for (const text of ['你好', '谢谢！', '嗯']) {
       const decision = route(message(text));
       assert.equal(decision.intent, 'chat');
-      assert.equal(decision.key, actorKeyOf('oc_group', 'ou_alice'));
+      assert.equal(decision.key, mainKeyOf('oc_group'));
     }
   });
 
@@ -70,10 +70,10 @@ describe('message-router 分拣', () => {
     assert.equal(route(message('谢谢，帮我改一下')).intent, 'task');
   });
 
-  it('未识别的长句按偏安全默认转执行体', () => {
+  it('未识别的长句进主对话', () => {
     const decision = route(message('我们明天再一起商量商量吧好不好呀'));
     assert.equal(decision.intent, 'task');
-    assert.match(decision.reason, /偏安全/);
+    assert.equal(decision.key, mainKeyOf('oc_group'));
   });
 });
 

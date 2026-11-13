@@ -123,15 +123,15 @@ function setup(logger?: { info(message: string): void; warn(message: string): vo
 }
 
 describe('FeishuAdapter 接线', () => {
-  it('闲聊与任务都进本人执行体（上下文连续）', async () => {
+  it('闲聊与任务都进 chat 级主对话', async () => {
     const { adapter, connection, executor, dir } = setup();
     await adapter.start();
 
     await connection.deliver(inbound('今天天气怎么样？'));
     await connection.deliver(inbound('帮我改一下配置'));
 
-    assert.equal(executor.runs[0]?.key, 'oc_group::ou_alice');
-    assert.equal(executor.runs[1]?.key, 'oc_group::ou_alice');
+    assert.equal(executor.runs[0]?.key, 'oc_group::__main__');
+    assert.equal(executor.runs[1]?.key, 'oc_group::__main__');
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -182,7 +182,8 @@ describe('FeishuAdapter 接线', () => {
   it('并发回复时卡片按执行体隔离，内容不交叉（T6）', async () => {
     const { adapter, connection, executor, dir } = setup();
     executor.next = (sink, text) => {
-      const reply = `回复:${text}`;
+      // 首条消息会附带主对话角色说明，所以按内容判定而不是回显全文。
+      const reply = text.includes('帮我改 A') ? '回复:帮我改 A' : '回复:帮我改 B';
       sink.emit({ type: 'delta', text: reply });
       sink.emit({ type: 'done', text: reply });
       return { ok: true, text: reply };
@@ -260,7 +261,7 @@ describe('FeishuAdapter 接线', () => {
       images: [{ mimeType: 'image/png', data: 'aGVsbG8=' }],
     });
 
-    assert.equal(executor.inputs[0]?.key, 'oc_group::ou_alice');
+    assert.equal(executor.inputs[0]?.key, 'oc_group::__main__');
     assert.equal(executor.inputs[0]?.images, 1);
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
