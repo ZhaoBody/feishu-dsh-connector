@@ -6,6 +6,10 @@
 
 export type { ActorKey, EventSink, Executor, ExecutorEvent, RunResult } from './contract.ts';
 export { SessionExecutor, createExecutor } from './executor.ts';
+export { HttpExecutor, createHttpExecutor } from './http-executor.ts';
+export type { HttpExecutorConfig } from './http-executor.ts';
+export { WebRpcClient, WebRpcError } from './web-rpc.ts';
+export type { WebRpcOptions } from './web-rpc.ts';
 export type { ExecutorConfig, ExecutorLogger } from './executor.ts';
 export { ExecutorPersistence } from './persistence.ts';
 export type { ActorRecord, ExecutorState, ExecutorPersistenceOptions } from './persistence.ts';

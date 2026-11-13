@@ -39,6 +39,16 @@ rl.on('line', (line) => {
     return;
   }
 
+  if (method === 'session/resume') {
+    // 已存在的 session 返回成功；不存在的返回错误（模拟真实行为）。
+    if (params.sessionId.includes('missing')) {
+      write({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'session not found' } });
+    } else {
+      respond(message.id, {});
+    }
+    return;
+  }
+
   if (method === 'session/prompt') {
     const text = textOf(params.contentBlocks);
     // 测试用：请求里带 EXIT 就模拟运行时崩溃（不回响应直接退出）。

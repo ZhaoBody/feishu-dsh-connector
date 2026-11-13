@@ -68,6 +68,8 @@ export class SdkProcess {
   private client: LineRpcClient | undefined;
   private readonly listeners = new Set<SdkEventListener>();
   private readonly exitListeners = new Set<(error: Error) => void>();
+  /** 已经 resume 进运行时的 session，避免每轮重复加载。 */
+  private readonly loadedSessions = new Set<string>();
   private readonly options: SdkProcessOptions;
   private readonly logger: RpcLogger;
   private exited = false;
@@ -160,6 +162,7 @@ export class SdkProcess {
       onDelta?.(textOfMessage);
     });
     try {
+      await this.ensureSession(sessionId);
       await client.request('session/prompt', {
         sessionId,
         contentBlocks: buildContentBlocks(input),
@@ -180,6 +183,23 @@ export class SdkProcess {
   /** 恢复一个已持久化的会话（不存在则抛错，不自动创建）。 */
   async resume(sessionId: string): Promise<void> {
     await this.requireClient().request('session/resume', { sessionId });
+  }
+
+  /**
+   * 确保 session 已加载进运行时，且只加载一次。
+   *
+   * 为什么必须：`session/prompt` 只对**未知 id** 懒创建，对已持久化的 session
+   * 会直接报 `session "…" already exists`。所以复用老会话前必须先 `session/resume`。
+   * resume 失败说明该 session 不存在（被删/损坏），此时不拦——交给 prompt 走懒创建。
+   */
+  async ensureSession(sessionId: string): Promise<void> {
+    if (this.loadedSessions.has(sessionId)) return;
+    try {
+      await this.resume(sessionId);
+    } catch (error) {
+      this.logger.debug(`[sdk] resume ${sessionId} 失败，按新会话处理：${String(error)}`);
+    }
+    this.loadedSessions.add(sessionId);
   }
 
   /** 优雅关闭：先请求 shutdown，再兜底 kill。 */

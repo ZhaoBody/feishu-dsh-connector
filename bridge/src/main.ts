@@ -9,7 +9,7 @@ import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createFileLogger, FeishuAdapter, LarkConnection, OutboundRegistry } from '@feishu-assistant/feishu-adapter';
-import { SessionExecutor } from '@feishu-assistant/dsh-executor';
+import { createHttpExecutor } from '@feishu-assistant/dsh-executor';
 
 const ROOT = resolve(process.cwd(), '..');
 const DEFAULT_WORKSPACE = resolve(ROOT, 'feishu-assistant-workspace');
@@ -19,13 +19,6 @@ function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`缺少环境变量 ${name}`);
   return value;
-}
-
-/** 权限模式：只接受 dsh 认识的三个值，其余一律回落到 workspace-write。 */
-function permissionMode(): 'read-only' | 'workspace-write' | 'danger-full-access' {
-  const raw = process.env.DSH_PERMISSION_MODE;
-  if (raw === 'read-only' || raw === 'danger-full-access') return raw;
-  return 'workspace-write';
 }
 
 /** 逗号分隔的环境变量 → 字符串数组；空值返回 undefined。 */
@@ -54,13 +47,15 @@ async function main(): Promise<void> {
     logger,
   });
 
-  const executor = new SessionExecutor({
-    command: process.env.DSH_COMMAND ?? 'dsh',
+  // 执行体走 dsh web 的 HTTP API：不再自己 spawn 子进程，web 永远是唯一写者。
+  // 这样 Web 里打开过的飞书会话也能继续聊，锁冲突从根上消失。
+  const executor = createHttpExecutor({
     cwd: workspace,
-    provider: process.env.DSH_PROVIDER ?? 'deepseek-official',
-    model: process.env.DSH_MODEL ?? 'deepseek-flash',
     persistenceFile: join(workspace, '.feishu-executor', 'actors.json'),
-    permissionMode: permissionMode(),
+    rpc: {
+      baseUrl: process.env.DSH_WEB_URL ?? 'http://127.0.0.1:3080',
+      ...(process.env.DSH_AUTH_FILE !== undefined ? { tokenFile: process.env.DSH_AUTH_FILE } : {}),
+    },
     logger,
   });
 
@@ -90,13 +85,23 @@ async function main(): Promise<void> {
   process.once('SIGINT', () => void stop('SIGINT'));
   process.once('SIGTERM', () => void stop('SIGTERM'));
 
-  // 自愈：SDK 重连 48 次后进入 failed 且不再自愈（实测 DNS 抖动会导致此状态）。
-  // 主动退出，交给 systemd 的 Restart=always 拉起一个干净进程。
-  // 20 秒一轮：比 60 秒少一个数量级的失联窗口，开销仍可忽略。
+  // 自愈：SDK 在重试耗尽后进入 failed 就不再恢复；但更常见的是卡在 reconnecting
+  // 反复超时（实测见过连续 40 次、每次 15s 超时），这种状态它也不会自己好。
+  // 所以两个条件满足其一就主动退出，交给 systemd Restart=always 重拉：
+  //   1) state === 'failed'
+  //   2) 持续 5 分钟没有 connected
+  let lastHealthyAt = Date.now();
   const healthTimer = setInterval(() => {
     const state = connection.connectionState();
-    if (state === 'failed') {
-      console.error(`[bridge] 长连接状态 ${state}，主动退出等待 systemd 重启`);
+    if (state === 'connected') {
+      lastHealthyAt = Date.now();
+      return;
+    }
+    const downForMs = Date.now() - lastHealthyAt;
+    if (state === 'failed' || downForMs > 5 * 60_000) {
+      console.error(
+        `[bridge] 长连接异常（state=${state}，已 ${Math.round(downForMs / 1000)}s 未连通），主动退出等待重启`,
+      );
       void adapter.stop().finally(() => process.exit(1));
     }
   }, 20_000);
@@ -104,7 +109,8 @@ async function main(): Promise<void> {
 
   // 连接层报错时立即复核一次，不等下一轮轮询。
   connection.onError(() => {
-    if (connection.connectionState() === 'failed') {
+    const state = connection.connectionState();
+    if (state === 'failed') {
       console.error('[bridge] 连接层报错且状态为 failed，主动退出等待重启');
       void adapter.stop().finally(() => process.exit(1));
     }
