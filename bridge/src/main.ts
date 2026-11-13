@@ -35,6 +35,9 @@ async function main(): Promise<void> {
   // 落盘日志：路由、撤回、执行结果都留痕，出事可复盘。
   const logger = createFileLogger(join(workspace, '.feishu-executor', 'bridge.log'), { echo: true });
 
+  // 白名单同时是「谁能用」和「谁是 owner」的依据：owner 的会话前缀不同，guard 会放行。
+  const allowedUsers = csv('FEISHU_ALLOWED_USERS');
+
   const connection = new LarkConnection({
     appId: required('FEISHU_APP_ID'),
     appSecret: required('FEISHU_APP_SECRET'),
@@ -52,6 +55,7 @@ async function main(): Promise<void> {
   const executor = createHttpExecutor({
     cwd: workspace,
     persistenceFile: join(workspace, '.feishu-executor', 'actors.json'),
+    ...(allowedUsers !== undefined ? { ownerOpenIds: allowedUsers } : {}),
     rpc: {
       baseUrl: process.env.DSH_WEB_URL ?? 'http://127.0.0.1:3080',
       ...(process.env.DSH_AUTH_FILE !== undefined ? { tokenFile: process.env.DSH_AUTH_FILE } : {}),
@@ -67,7 +71,7 @@ async function main(): Promise<void> {
     connection,
     executor,
     outbound,
-    ...(csv('FEISHU_ALLOWED_USERS') !== undefined ? { allowedUsers: csv('FEISHU_ALLOWED_USERS') } : {}),
+    ...(allowedUsers !== undefined ? { allowedUsers } : {}),
     logger,
   });
 

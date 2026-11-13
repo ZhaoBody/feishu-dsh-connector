@@ -3,4 +3,7 @@
     - id: feishu-guard
       name: '@local/feishu-guard'
       config:
+        # 受限：其他人的飞书会话（只读 + 项目范围）
         sessionPrefix: feishu-
+        # 可信：白名单用户自己的飞书会话（完全放行）
+        trustedPrefix: feishu-owner-

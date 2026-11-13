@@ -81,6 +81,14 @@ describe('工具拦截（只对飞书会话）', () => {
     assert.match(decision.reason, /只能读项目工作区/);
   });
 
+  it('owner 的飞书会话（feishu-owner- 前缀）完全放行', async () => {
+    const { ctx, handlers } = makeCtx();
+    apply(ctx);
+    assert.equal((await call(handlers, 'bash', { command: 'ls /' }, 'feishu-owner-abc')).kind, 'allow');
+    assert.equal((await call(handlers, 'write', { path: '/srv/project/a.md' }, 'feishu-owner-abc')).kind, 'allow');
+    assert.equal((await call(handlers, 'read', { path: '/home/u/.ssh/id_rsa' }, 'feishu-owner-abc')).kind, 'allow');
+  });
+
   it('非飞书会话完全不受影响', async () => {
     const { ctx, handlers } = makeCtx();
     apply(ctx);

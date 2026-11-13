@@ -49,6 +49,35 @@ function makeExecutor(overrides: Partial<ExecutorConfig> = {}): SessionExecutor 
   return executor;
 }
 
+describe('HttpExecutor 的会话前缀', () => {
+  it('owner 与非 owner 生成不同前缀', async () => {
+    const { HttpExecutor } = await import('../src/http-executor.ts');
+    const created: string[] = [];
+    const fakeRpc = {
+      call: async (endpoint: string, args: { request?: { sessionId?: string } }) => {
+        if (endpoint === 'session/create') {
+          created.push(String(args.request?.sessionId));
+          return { sessionId: args.request?.sessionId };
+        }
+        return {};
+      },
+    };
+    // 注入假 rpc：直接构造后替换私有字段（测试用）
+    const executor = new HttpExecutor({
+      cwd: '/srv/ws',
+      persistenceFile: '/tmp/mint-test.json',
+      ownerOpenIds: ['ou_owner'],
+    });
+    (executor as unknown as { rpc: typeof fakeRpc }).rpc = fakeRpc;
+    await executor.run('oc_a::ou_owner' as ActorKey, { text: 'hi' }, { emit: () => {} }).catch(() => undefined);
+    await executor.run('oc_a::ou_other' as ActorKey, { text: 'hi' }, { emit: () => {} }).catch(() => undefined);
+    await executor.dispose();
+
+    assert.ok(created.some((id) => id.startsWith('feishu-owner-')), `owner 前缀缺失: ${created.join(',')}`);
+    assert.ok(created.some((id) => /^feishu-[0-9a-f]{8}$/.test(id)), `非 owner 前缀缺失: ${created.join(',')}`);
+  });
+});
+
 describe('SessionExecutor', () => {
   it('投递一轮并把助手文本交回', async () => {
     const executor = makeExecutor();

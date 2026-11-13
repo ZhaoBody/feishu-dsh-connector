@@ -30,6 +30,13 @@ export interface HttpExecutorConfig {
   readonly runTimeoutMs?: number;
   /** 注入 session id 生成器，便于测试。 */
   readonly sessionIdMinter?: (key: ActorKey) => string;
+  /**
+   * 拥有完整权限的发送者 open_id（通常等于 FEISHU_ALLOWED_USERS）。
+   *
+   * 他们的会话用 `feishu-owner-` 前缀创建，`feishu-guard` 会放行；
+   * 其他人的会话用 `feishu-` 前缀，受只读与范围限制。
+   */
+  readonly ownerOpenIds?: readonly string[];
   readonly logger?: { warn(message: string): void; debug(message: string): void };
 }
 
@@ -148,7 +155,7 @@ export class HttpExecutor implements Executor {
   private async ensureSession(key: ActorKey): Promise<string> {
     const existing = this.persistence.get(key);
     if (existing !== undefined) return existing.sessionId;
-    const requested = this.config.sessionIdMinter?.(key) ?? `feishu-${randomUUID().slice(0, 8)}`;
+    const requested = this.config.sessionIdMinter?.(key) ?? this.mintSessionId(key);
     const created = await this.rpc.call<{ sessionId: string }>('session/create', {
       request: {
         ...(this.config.cwd !== '' ? { cwd: this.config.cwd } : {}),
@@ -159,6 +166,18 @@ export class HttpExecutor implements Executor {
     this.persistence.set(key, created.sessionId);
     this.logger.debug(`为 ${key} 创建 session ${created.sessionId}`);
     return created.sessionId;
+  }
+
+  /**
+   * 生成 session id：owner 与非 owner 用不同前缀。
+   *
+   * `feishu-guard` 靠这个前缀区分权限，所以前缀本身就是安全边界的一部分，
+   * 不能让人随便指定。
+   */
+  private mintSessionId(key: ActorKey): string {
+    const openId = key.split('::')[1] ?? '';
+    const isOwner = this.config.ownerOpenIds?.includes(openId) ?? false;
+    return `${isOwner ? 'feishu-owner-' : 'feishu-'}${randomUUID().slice(0, 8)}`;
   }
 
   /** 当前会话的事件游标（page 的 throughSeq 上界）。 */

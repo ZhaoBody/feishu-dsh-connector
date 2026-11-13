@@ -6,7 +6,8 @@
  *
  * 1. **只读**：写文件与执行命令一律拒绝（无法静态保证 bash 只读，所以整类禁掉）
  * 2. **范围**：读操作的绝对路径必须落在某个项目工作区内；出现 `..` 直接拒绝
- * 3. **隔离**：只对 session id 以 `feishu-` 开头的会话生效，你自己的 Web 会话不受影响
+ * 3. **隔离**：只对 session id 以 `feishu-` 开头的会话生效；白名单用户自己的飞书会话
+ *    用 `feishu-owner-` 前缀，完全放行，Web 会话也不受影响
  *
  * 数据范围取自 `workspaceRegistry`——**项目工作区 = 公司数据**，其余（家目录、.ssh、.dsh、
  * 个人代码）一律不许碰。
@@ -31,8 +32,10 @@ const READ_TOOLS = new Set(['read', 'read_image', 'glob', 'grep', 'ls', 'list_fi
 
 /** 默认配置。 */
 const DEFAULTS = {
-  /** 只对这些 session 生效。 */
+  /** 受限范围：这些 session 只能只读访问项目工作区。 */
   sessionPrefix: 'feishu-',
+  /** 可信范围：这些 session 完全放行（白名单用户自己的飞书会话）。 */
+  trustedPrefix: 'feishu-owner-',
 };
 
 /**
@@ -102,6 +105,8 @@ export function apply(ctx, config = {}) {
 
   ctx.on('tools/pre-execute', async (exec, next) => {
     const sessionId = String(exec.agent?.session?.id ?? '');
+    // 白名单用户自己的飞书会话（feishu-owner- 前缀）完全放行。
+    if (sessionId.startsWith(options.trustedPrefix)) return next();
     if (!sessionId.startsWith(options.sessionPrefix)) return next();
 
     const toolName = String(exec.name);
