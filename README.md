@@ -64,7 +64,7 @@ flowchart TB
 ### 1. 安装
 
 ```bash
-git clone https://github.com/<you>/feishu-dsh-connector.git
+git clone https://github.com/ZhaoBody/feishu-dsh-connector.git
 cd feishu-dsh-connector
 pnpm install            # 四个包共用一个 workspace
 ```

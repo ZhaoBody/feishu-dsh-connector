@@ -20,7 +20,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<you>/feishu-dsh-connector.git",
+    "url": "git+https://github.com/ZhaoBody/feishu-dsh-connector.git",
     "directory": "packages/executor"
   },
   "engines": {
