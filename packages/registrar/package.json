@@ -1,0 +1,38 @@
+{
+  "name": "@local/feishu-session-registrar",
+  "version": "1.1.0",
+  "private": true,
+  "description": "把飞书 bridge 产生的会话挂到工作区上，让 dsh Web 的侧边栏能看到它们。",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./lib/*.js": "./lib/*.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<you>/feishu-dsh-connector.git",
+    "directory": "packages/registrar"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

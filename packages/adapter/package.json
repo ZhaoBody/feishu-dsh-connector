@@ -1,0 +1,31 @@
+{
+  "name": "@feishu-assistant/feishu-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "飞书接入层：长连接、消息解析、分拣与回复渲染。只依赖 Executor 契约，不知道执行体是进程还是 session。",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-force-exit test/*.spec.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.76.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<you>/feishu-dsh-connector.git",
+    "directory": "packages/adapter"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

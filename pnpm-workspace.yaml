@@ -1,0 +1,6 @@
+# 飞书接入 / 执行体 / 接线 / 登记插件，四个包一个 workspace。
+packages:
+  - packages/adapter
+  - packages/executor
+  - packages/registrar
+  - bridge

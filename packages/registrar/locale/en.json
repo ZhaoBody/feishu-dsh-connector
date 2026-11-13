@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Feishu Session Registrar",
+    "description": "Attaches sessions produced by the Feishu bridge to a workspace so the sidebar lists them. Registration only; never modifies session content."
+  }
+}

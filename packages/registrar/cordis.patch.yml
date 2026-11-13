@@ -1,0 +1,10 @@
+# 只读登记型插件：把飞书 bridge 的会话挂到工作区上，让侧边栏可见。
+# workspacePath 必须是已存在的目录；插件不会创建它。
+# 配置写错会在启动时抛错（不会带半套参数静默运行）。
+- insert:
+    - id: feishu-session-registrar
+      name: '@local/feishu-session-registrar'
+      config:
+        workspacePath: /absolute/path/to/feishu-assistant-workspace   # ← 换成你自己的
+        workspaceTitle: 飞书助手
+        intervalMs: 30000

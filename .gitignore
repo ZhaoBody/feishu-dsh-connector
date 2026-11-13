@@ -1,0 +1,24 @@
+# 依赖
+node_modules/
+package-lock.json
+yarn.lock
+
+# 构建与缓存
+dist/
+*.tsbuildinfo
+
+# 运行数据（会话、执行体映射、出站登记、日志）
+feishu-assistant-workspace/
+.feishu-executor/
+*.log
+
+# 本地配置与密钥
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
