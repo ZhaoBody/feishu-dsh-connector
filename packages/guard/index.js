@@ -13,7 +13,8 @@
  * 个人代码）一律不许碰。
  */
 
-import { isAbsolute, resolve } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 
 /** 插件名（与 patch 行 id 一致）。 */
 export const name = 'feishu-guard';
@@ -36,6 +37,8 @@ const DEFAULTS = {
   sessionPrefix: 'feishu-',
   /** 可信范围：这些 session 完全放行（白名单用户自己的飞书会话）。 */
   trustedPrefix: 'feishu-owner-',
+  /** 任务执行体：允许写与执行命令，但路径仍限制在允许范围内。 */
+  taskPrefix: 'feishu-task-',
 };
 
 /**
@@ -97,6 +100,13 @@ export function apply(ctx, config = {}) {
     throw new Error('feishu-guard: sessionPrefix 不能为空');
   }
 
+  /** 允许访问的根目录：项目工作区 + 技能目录（读文档要用）。 */
+  function allowedRoots() {
+    const workspaces = ctx.workspaceRegistry.list().map((workspace) => workspace.path);
+    const skills = join(homedir(), '.dsh', 'skills');
+    return [...workspaces, skills];
+  }
+
   /** 统一拒绝返回。 */
   function deny(reason) {
     ctx.logger?.warn?.(`feishu-guard: 已拒绝一次工具调用 — ${reason}`);
@@ -110,16 +120,29 @@ export function apply(ctx, config = {}) {
     if (!sessionId.startsWith(options.sessionPrefix)) return next();
 
     const toolName = String(exec.name);
+    const isTaskActor = sessionId.startsWith(options.taskPrefix);
 
     if (WRITE_TOOLS.has(toolName)) {
+      // 任务执行体允许写，但同样不能写到允许范围之外。
+      if (isTaskActor) {
+        const roots = allowedRoots();
+        const escape = findEscape(exec.arguments, roots);
+        if (escape !== undefined) return deny(`写入超出允许范围：${escape}`);
+        return next();
+      }
       return deny(`飞书会话是只读的：不允许 ${toolName}。需要改动请自己在 Web 里操作。`);
     }
     if (EXEC_TOOLS.has(toolName)) {
+      // 任务执行体必须能跑命令才能干活；命令里出现受限路径或敏感文件时拦下。
+      if (isTaskActor) {
+        const escape = findEscape(exec.arguments, allowedRoots());
+        if (escape !== undefined) return deny(`命令触碰了不允许的路径：${escape}`);
+        return next();
+      }
       return deny(`飞书会话禁止执行命令（${toolName}），以免越界读写或个人文件被翻。`);
     }
     if (READ_TOOLS.has(toolName)) {
-      const roots = ctx.workspaceRegistry.list().map((workspace) => workspace.path);
-      const escape = findEscape(exec.arguments, roots);
+      const escape = findEscape(exec.arguments, allowedRoots());
       if (escape !== undefined) return deny(`飞书会话只能读项目工作区：${escape}`);
       return next();
     }

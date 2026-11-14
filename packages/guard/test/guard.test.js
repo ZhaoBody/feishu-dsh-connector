@@ -89,6 +89,25 @@ describe('工具拦截（只对飞书会话）', () => {
     assert.equal((await call(handlers, 'read', { path: '/home/u/.ssh/id_rsa' }, 'feishu-owner-abc')).kind, 'allow');
   });
 
+  it('任务执行体（feishu-task-）能干活：命令与写入放行', async () => {
+    const { ctx, handlers } = makeCtx();
+    apply(ctx);
+    // 命令里只有工作区路径 → 放行
+    assert.equal((await call(handlers, 'bash', { command: 'ls /srv/project' }, 'feishu-task-abc')).kind, 'allow');
+    // 写工作区内 → 放行
+    assert.equal((await call(handlers, 'write', { path: '/srv/project/out.md' }, 'feishu-task-abc')).kind, 'allow');
+    // 读工作区 → 放行
+    assert.equal((await call(handlers, 'read', { path: '/srv/project/a.md' }, 'feishu-task-abc')).kind, 'allow');
+  });
+
+  it('任务执行体碰个人/凭证路径仍被拒', async () => {
+    const { ctx, handlers } = makeCtx();
+    apply(ctx);
+    assert.equal((await call(handlers, 'bash', { command: 'cat /home/u/.ssh/id_rsa' }, 'feishu-task-abc')).kind, 'deny');
+    assert.equal((await call(handlers, 'write', { path: '/home/u/.bashrc' }, 'feishu-task-abc')).kind, 'deny');
+    assert.equal((await call(handlers, 'read', { path: '/home/u/Desktop/private.md' }, 'feishu-task-abc')).kind, 'deny');
+  });
+
   it('非飞书会话完全不受影响', async () => {
     const { ctx, handlers } = makeCtx();
     apply(ctx);

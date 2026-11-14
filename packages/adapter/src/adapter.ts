@@ -264,23 +264,27 @@ export class FeishuAdapter {
   private spawnTask(chatId: string, mainKey: ActorKey, replyTo: string, task: string): void {
     const taskKey = `${chatId}::__task-${++this.taskSeq}` as ActorKey;
     void (async () => {
-      const collector = new ReplyCollector();
-      const result = await this.executor.run(taskKey, { text: task }, {
-        emit: (event: ExecutorEvent) => collector.onEvent(event),
-      });
-      const outcome = result.ok ? result.text : `执行失败：${result.text}`;
-      // 结果注回主对话：它持记忆，由它决定怎么转述给用户。
-      const followup = new ReplyCollector();
-      const injected = await this.executor.run(
-        mainKey,
-        { text: `【执行体回报】任务：${task}\n结果：${outcome}` },
-        { emit: (event: ExecutorEvent) => followup.onEvent(event) },
-      );
-      const text = injected.ok ? parseSpawn(followup.snapshot.text).text : `⚠️ ${outcome}`;
       try {
+        this.logger.info(`派活开始 task=${taskKey}`);
+        const collector = new ReplyCollector();
+        const result = await this.executor.run(taskKey, { text: task }, {
+          emit: (event: ExecutorEvent) => collector.onEvent(event),
+        });
+        const outcome = result.ok ? result.text : `执行失败：${result.text}`;
+        this.logger.info(`派活完成 task=${taskKey} ok=${result.ok} 长度=${outcome.length}`);
+        // 结果注回主对话：它持记忆，由它决定怎么转述给用户。
+        const followup = new ReplyCollector();
+        const injected = await this.executor.run(
+          mainKey,
+          { text: `【执行体回报】任务：${task}\n结果：${outcome}` },
+          { emit: (event: ExecutorEvent) => followup.onEvent(event) },
+        );
+        const text = injected.ok ? parseSpawn(followup.snapshot.text).text : `⚠️ ${outcome}`;
         await this.send(chatId, replyTo, text.length > 0 ? text : outcome, 'text');
+        this.logger.info(`派活结果已回发 task=${taskKey}`);
       } catch (error) {
-        this.logger.warn(`派活结果回发失败：${String(error)}`);
+        // 派活是后台任务，异常必须落日志，否则会出现「派出去了但永远没回音」。
+        this.logger.warn(`派活失败 task=${taskKey}：${error instanceof Error ? error.message : String(error)}`);
       }
     })();
   }
