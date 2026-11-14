@@ -25,6 +25,8 @@ export interface ConnectionPort extends CardTransport {
   onMessage(handler: MessageHandler): () => void;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
+  /** 往群里发一条新消息（不挂回复关系），返回 message id。 */
+  sendText(chatId: string, text: string): Promise<string>;
   /** 回复一条消息，返回新消息的 message id（用于登记出站记录）。 */
   replyText(chatId: string, messageId: string, text: string): Promise<string>;
   /** 撤回一条消息；失败抛错。 */
@@ -169,44 +171,17 @@ export class FeishuAdapter {
       );
     }
 
-    await this.runStreaming(message, decision);
+    await this.handleMainActor(message, decision);
   }
 
   /**
-   * 流式执行：一张卡片承载一条回复，内容原地生长。
+   * 主对话处理：静默执行，回复由哨兵统一投递到群。
    *
-   * 卡片按执行体隔离——不同 key 各开各的卡，同一时刻互不覆盖（需求 T6）。
-   * 卡片打不开就降级为一条纯文本回复，绝不静默吞掉结果。
+   * 为什么不在入口直接发：主对话有两个入口（飞书、Web GUI），后者产生的回复也要进群。
+   * 把「发送」收敛成一条路径（哨兵），两个入口才不会一半有、一半没有。
    */
-  private async runStreaming(message: InboundMessage, decision: RouteDecision): Promise<void> {
+  private async handleMainActor(message: InboundMessage, decision: RouteDecision): Promise<void> {
     const collector = new ReplyCollector();
-    let card: StreamingCard | undefined;
-
-    try {
-      card = new StreamingCard(this.connection, message.chatId, message.messageId, {
-        throttleMs: this.cardThrottleMs,
-        now: this.now,
-        logger: this.logger,
-        onNewCard: (messageId) => {
-          this.outbound.add({ messageId, chatId: message.chatId, kind: 'card', createdAt: this.now() });
-        },
-      });
-      const messageId = await card.open();
-      this.liveCards.add(card);
-      this.outbound.add({ messageId, chatId: message.chatId, kind: 'card', createdAt: this.now() });
-    } catch (error) {
-      this.logger.warn(`卡片打开失败，降级纯文本：${String(error)}`);
-      card?.dispose();
-      card = undefined;
-    }
-
-    const sink = {
-      emit: (event: ExecutorEvent): void => {
-        collector.onEvent(event);
-        if (card !== undefined) card.push(collector.snapshot.text);
-      },
-    };
-
     const startedAt = this.now();
     let text = this.composeText(message);
     // 每个主对话首次交互时注入角色说明，之后它记住了。
@@ -220,39 +195,22 @@ export class FeishuAdapter {
         text,
         ...(message.images !== undefined ? { images: message.images } : {}),
       },
-      sink,
+      { emit: (event: ExecutorEvent) => collector.onEvent(event) },
     );
     this.logger.info(
       `执行 key=${decision.key} ok=${result.ok} 耗时=${this.now() - startedAt}ms 长度=${result.text.length}`,
     );
 
-    // 失败：把错误原样交给用户（卡片红色终态或纯文本）。
     if (!result.ok) {
-      const failure = collector.snapshot.text;
-      if (card !== undefined) {
-        await card.close(failure, 'error');
-        this.liveCards.delete(card);
-        return;
-      }
-      await this.send(message.chatId, message.messageId, failure, 'text');
+      // 失败要即时告知，不经过哨兵——否则群里像是没收到。
+      await this.send(message.chatId, message.messageId, collector.snapshot.text, 'text');
       return;
     }
 
-    // 成功：解析派活标记。正文之外的任务另开无状态会话并行执行。
     const parsed = parseSpawn(result.text);
     for (const task of parsed.tasks) {
       this.logger.info(`主对话派活：${task.slice(0, 60)}`);
-      this.spawnTask(message.chatId, decision.key, message.messageId, task);
-    }
-    const visible = parsed.text.length > 0 ? parsed.text : parsed.tasks.length > 0 ? '收到，已经派人去办了。' : '';
-
-    if (card !== undefined) {
-      await card.close(visible, 'done');
-      this.liveCards.delete(card);
-      return;
-    }
-    if (visible.length > 0) {
-      await this.send(message.chatId, message.messageId, visible, 'text');
+      this.spawnTask(message.chatId, decision.key, task);
     }
   }
 
@@ -261,7 +219,7 @@ export class FeishuAdapter {
    *
    * 不阻塞接入层——主对话派完就能接下一句话。
    */
-  private spawnTask(chatId: string, mainKey: ActorKey, replyTo: string, task: string): void {
+  private spawnTask(chatId: string, mainKey: ActorKey, task: string): void {
     const taskKey = `${chatId}::__task-${++this.taskSeq}` as ActorKey;
     void (async () => {
       try {
@@ -279,9 +237,8 @@ export class FeishuAdapter {
           { text: `【执行体回报】任务：${task}\n结果：${outcome}` },
           { emit: (event: ExecutorEvent) => followup.onEvent(event) },
         );
-        const text = injected.ok ? parseSpawn(followup.snapshot.text).text : `⚠️ ${outcome}`;
-        await this.send(chatId, replyTo, text.length > 0 ? text : outcome, 'text');
-        this.logger.info(`派活结果已回发 task=${taskKey}`);
+        // 结果已经注回主对话，投递由哨兵统一负责。
+        this.logger.info(`派活结果已回注主对话 task=${taskKey} ok=${injected.ok}`);
       } catch (error) {
         // 派活是后台任务，异常必须落日志，否则会出现「派出去了但永远没回音」。
         this.logger.warn(`派活失败 task=${taskKey}：${error instanceof Error ? error.message : String(error)}`);
@@ -307,6 +264,21 @@ export class FeishuAdapter {
   private async send(chatId: string, replyTo: string, text: string, kind: OutboundKind): Promise<void> {
     const messageId = await this.connection.replyText(chatId, replyTo, text);
     this.outbound.add({ messageId, chatId, kind, createdAt: this.now() });
+  }
+
+  /**
+   * 主动往群里发一条文本。
+   *
+   * 供哨兵、本地发送接口、任何外部调用方使用——发送能力不再只属于消息回复流程。
+   */
+  async sendToChat(chatId: string, text: string): Promise<{ ok: boolean; messageId?: string; error?: string }> {
+    try {
+      const messageId = await this.connection.sendText(chatId, text);
+      this.outbound.add({ messageId, chatId, kind: 'text', createdAt: this.now() });
+      return { ok: true, messageId };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   /** 中断只作用于说话人自己的执行体，并在回执里说清楚。 */

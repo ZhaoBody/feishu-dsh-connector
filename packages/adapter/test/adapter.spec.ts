@@ -51,6 +51,14 @@ class FakeExecutor implements Executor {
 
 /** 记录回复的假连接；每次发送返回递增的 messageId。 */
 class FakeConnection implements ConnectionPort {
+  /** 主动发送（哨兵/接口用）。 */
+  async sendText(chatId: string, text: string): Promise<string> {
+    const messageId = `om_sent_${this.sent.length}`;
+    this.sent.push({ chatId, text, messageId });
+    return messageId;
+  }
+
+  readonly sent: Array<{ chatId: string; text: string; messageId: string }> = [];
   readonly replies: Array<{ chatId: string; messageId: string; text: string }> = [];
   readonly recalled: string[] = [];
   readonly cards: Array<{ messageId: string; card: Record<string, unknown> }> = [];
@@ -146,9 +154,8 @@ describe('FeishuAdapter 接线', () => {
 
     await connection.deliver(inbound('帮我跑测试'));
 
-    const lastCard = connection.cards.at(-1);
-    const content = JSON.stringify(lastCard?.card ?? {});
-    assert.match(content, /执行失败：进程崩了/);
+    // 失败走即时文本回执（成功才交给哨兵投递）。
+    assert.match(connection.replies.at(-1)?.text ?? '', /进程崩了/);
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -165,47 +172,32 @@ describe('FeishuAdapter 接线', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('每条回复都登记出站记录，可据此撤回', async () => {
+  it('主动发送也登记出站记录，可据此撤回', async () => {
     const { adapter, connection, dir } = setup();
     await adapter.start();
 
-    await connection.deliver(inbound('帮我改一下配置'));
-    const recalled = await adapter.recall('oc_group');
+    const sent = await adapter.sendToChat('oc_group', '主动发一条');
+    assert.equal(sent.ok, true);
 
+    const recalled = await adapter.recall('oc_group');
     assert.equal(recalled.ok, true);
-    assert.match(recalled.messageId ?? '', /^om_card_/);
+    assert.equal(recalled.messageId, sent.messageId);
     assert.deepEqual(connection.recalled, [recalled.messageId]);
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('并发回复时卡片按执行体隔离，内容不交叉（T6）', async () => {
-    const { adapter, connection, executor, dir } = setup();
-    executor.next = (sink, text) => {
-      // 首条消息会附带主对话角色说明，所以按内容判定而不是回显全文。
-      const reply = text.includes('帮我改 A') ? '回复:帮我改 A' : '回复:帮我改 B';
-      sink.emit({ type: 'delta', text: reply });
-      sink.emit({ type: 'done', text: reply });
-      return { ok: true, text: reply };
-    };
+  it('主动发送按群隔离，内容不串（T6）', async () => {
+    const { adapter, connection, dir } = setup();
     await adapter.start();
 
     await Promise.all([
-      connection.deliver(inbound('帮我改 A', 'ou_a')),
-      connection.deliver(inbound('帮我改 B', 'ou_b')),
+      adapter.sendToChat('oc_group', '消息 A'),
+      adapter.sendToChat('oc_group', '消息 B'),
     ]);
 
-    // 每张卡最后一次 patch 的内容即终态。
-    const finals = new Map<string, string>();
-    for (const { messageId, card } of connection.cards) {
-      const elements = (card as { body?: { elements?: Array<{ content?: string }> } }).body?.elements;
-      finals.set(messageId, elements?.[0]?.content ?? '');
-    }
-    const texts = [...finals.values()];
-    assert.equal(texts.length, 2, '两个人应各自一张卡');
-    assert.ok(texts.some((text) => text === '回复:帮我改 A'), `缺失 A 的卡：${JSON.stringify(texts)}`);
-    assert.ok(texts.some((text) => text === '回复:帮我改 B'), `缺失 B 的卡：${JSON.stringify(texts)}`);
-
+    const texts = connection.sent.map((item) => item.text).sort();
+    assert.deepEqual(texts, ['消息 A', '消息 B']);
     await adapter.stop();
     rmSync(dir, { recursive: true, force: true });
   });

@@ -8,8 +8,15 @@
 import { mkdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { createFileLogger, FeishuAdapter, LarkConnection, OutboundRegistry } from '@feishu-assistant/feishu-adapter';
-import { createHttpExecutor } from '@feishu-assistant/dsh-executor';
+import {
+  createFileLogger,
+  FeishuAdapter,
+  LarkConnection,
+  MainWatcher,
+  OutboundRegistry,
+  SendApi,
+} from '@feishu-assistant/feishu-adapter';
+import { createHttpExecutor, WebRpcClient } from '@feishu-assistant/dsh-executor';
 
 const ROOT = resolve(process.cwd(), '..');
 const DEFAULT_WORKSPACE = resolve(ROOT, 'feishu-assistant-workspace');
@@ -78,9 +85,39 @@ async function main(): Promise<void> {
 
   await adapter.start();
 
+  // 主对话哨兵：不管回复来自飞书还是 Web GUI，统一由它投递到群。
+  const executorDir = join(workspace, '.feishu-executor');
+  const watcher = new MainWatcher({
+    rpc: new WebRpcClient({
+      baseUrl: process.env.DSH_WEB_URL ?? 'http://127.0.0.1:3080',
+      ...(process.env.DSH_AUTH_FILE !== undefined ? { tokenFile: process.env.DSH_AUTH_FILE } : {}),
+      logger,
+    }),
+    actorsFile: join(executorDir, 'actors.json'),
+    stateFile: join(executorDir, 'watcher.json'),
+    onMessage: async (chatId, text) => {
+      const result = await adapter.sendToChat(chatId, text);
+      if (!result.ok) logger.warn(`哨兵投递失败 chat=${chatId}：${result.error ?? '未知错误'}`);
+    },
+    intervalMs: 2_000,
+    logger,
+  });
+  watcher.start();
+
+  // 本地发送接口：任何脚本/定时任务都能往群里发（默认只绑回环）。
+  const sendApi = new SendApi({
+    port: Number(process.env.FEISHU_SEND_PORT ?? 3090),
+    send: (chatId, text) => adapter.sendToChat(chatId, text),
+    ...(process.env.FEISHU_SEND_TOKEN !== undefined ? { token: process.env.FEISHU_SEND_TOKEN } : {}),
+    logger,
+  });
+  await sendApi.start();
+
   const stop = async (signal: string): Promise<void> => {
     console.error(`[bridge] 收到 ${signal}，正在关闭`);
     try {
+      watcher.stop();
+      await sendApi.stop();
       await adapter.stop();
       await logger.flush();
     } finally {
