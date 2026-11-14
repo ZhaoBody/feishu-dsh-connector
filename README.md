@@ -1,6 +1,6 @@
 # Feishu × DeepSeek Harness Connector
 
-把飞书群消息接进 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的独立服务：**每个群成员一个专属执行体**，各自串行、互不阻塞，机器人自己不再被长任务占死。
+把飞书群消息接进 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 的独立服务：**一个主对话持记忆、负责对接，任务派给无状态执行体并行去跑**。主对话不再被长任务占死，多人同时提问也不会互相污染。
 
 ## 为什么不用现成插件
 
@@ -18,46 +18,58 @@ dsh 的飞书插件是「一个 chat = 一个 session」，全群共用一条队
 flowchart TB
   subgraph F["飞书接入层 packages/adapter"]
     L["长连接 / 事件去重"]
-    M["分拣：中断 / 任务 / 闲聊"]
+    M["分拣 + 派活解析"]
     C["流式卡片（卡片 2.0 + patch）"]
     R["撤回 + 出站登记"]
   end
 
   subgraph X["执行体层 packages/executor"]
-    K["ActorKey = chatId::openId"]
-    Q["单写者队列"]
-    P["dsh --profile sdk 子进程"]
+    H["WebRpcClient（HTTP + cookie 认证）"]
+    Q["单会话串行 · 跨会话并行"]
     S["映射持久化 actors.json"]
   end
 
-  subgraph D["DeepSeek Harness"]
-    A["独立 session（每人一个）"]
+  subgraph D["DeepSeek Harness（dsh web 进程）"]
+    MAIN["主对话 session（每群一个，唯一持记忆）"]
+    TASK["任务执行体 session（无状态，可并行多个）"]
   end
 
-  M --> K --> Q --> P --> A
-  C -. "delta 事件节流 patch" .- P
+  L --> M
+  M -->|"所有消息"| MAIN
+  MAIN -->|"[[SPAWN]] 任务 [[/SPAWN]]"| M
+  M -->|"派活"| TASK
+  TASK -->|"结果回注"| MAIN
+  MAIN --> C
+  C -. "patch" .- L
   R -. "outbound.json" .- C
+  H --- MAIN
+  H --- TASK
+  Q --- H
+  S --- H
 ```
 
-三个包 + 一个接线入口：
+**执行体不自己起进程**：它通过 dsh web 的 HTTP API 驱动 agent，web 是 session 的唯一写者——Web 侧边栏里打开过的会话，机器人照样能继续聊（旧方案会撞 `session/writer-held` 锁）。
+
+四个包 + 一个接线入口：
 
 | 包 | 职责 |
 |---|---|
-| `packages/adapter` | 飞书接入：长连接、分拣、流式卡片、撤回。**不碰进程与 session** |
-| `packages/executor` | 执行体：`ActorKey → session`、子进程、单写者队列、持久化。**不碰飞书** |
+| `packages/adapter` | 飞书接入：长连接、分拣、派活解析、流式卡片、撤回。**不碰进程与 session** |
+| `packages/executor` | 执行体：`ActorKey → session`、HTTP RPC、串行队列、持久化。**不碰飞书** |
+| `packages/guard` | dsh 插件：按会话前缀限制飞书来源的工具调用（只读/范围/凭证保护） |
 | `packages/registrar` | dsh 插件：把飞书会话挂到工作区，让 Web 侧边栏看得见 |
 | `bridge` | 接线入口（约 90 行，无业务逻辑） |
 
 ## 特性
 
-- **按人隔离**：同一群内每个成员一个独立 session，各自上下文、互不干扰
-- **同人串行**：同一个人连发多条严格按序执行，不会并发写丢更新
-- **跨人并行**：两个人同时跑任务，实测两个请求几乎同时返回
+- **主对话持记忆**：每个群一个主对话，所有消息都进它——追问不会掉进另一段上下文
+- **派活并行**：主对话判断「能答就答、要干活就派」，任务甩给无状态执行体同时跑
+- **并行实测**：三人同时提问 14.6 秒全部答完（串行需 43 秒）
 - **流式卡片**：卡片 2.0 + 原地 patch，支持列表、代码块、表格
 - **撤回**：出站消息持久化登记，重启后仍可撤；文本/文件/卡片一视同仁
-- **失败可见**：模型报错、进程崩溃、执行超时都会让卡片变红并附原因
-- **自愈**：子进程崩溃自动重建；长连接失败主动退出交给 systemd 重启
-- **安全**：用户白名单 + 沙箱权限模式（默认 `workspace-write`）
+- **失败可见**：模型报错、执行超时都会让卡片变红并附原因；派活链路有开始/完成/回发三段日志
+- **自愈**：长连接连续 5 分钟未连通主动退出，交给 systemd 重启
+- **安全**：主对话不执行命令；任务执行体可干活但路径限项目工作区 + 技能目录；凭证类文件一律拦
 
 ## 快速开始
 
@@ -77,7 +89,8 @@ pnpm install            # 四个包共用一个 workspace
 
 ```bash
 cp bridge/.env.example bridge/.env
-# 填 FEISHU_APP_ID / FEISHU_APP_SECRET / DSH_WORKSPACE / FEISHU_ALLOWED_USERS
+# 填 FEISHU_APP_ID / FEISHU_APP_SECRET / DSH_WORKSPACE
+# 可选：FEISHU_OWNER_USERS（有完整权限的人）、FEISHU_ALLOWED_USERS（留空=所有人可用）
 ```
 
 ### 4. 启动
@@ -108,16 +121,16 @@ plugin_manager install_bundle --target /absolute/path/to/packages/registrar
 FEISHU_ALLOWED_USERS=ou_xxx   # 非白名单用户在进 agent 之前就被拒
 ```
 
-白名单之外，`packages/guard` 插件再对飞书会话做一层工具级约束：
+`packages/guard` 插件再按**会话类型**做工具级约束（靠 session id 前缀区分）：
 
-| 类别 | 处理 |
-|---|---|
-| 写文件（`write`/`edit`） | 拒绝——飞书会话严格只读 |
-| 执行命令（`bash`/`terminal_*`） | 拒绝——无法静态保证只读 |
-| 读文件 | 绝对路径必须在项目工作区内；含 `..` 直接拒绝 |
-| 提问/定时/待办 | 放行 |
+| 会话 | 前缀 | 能干什么 |
+|---|---|---|
+| 你自己的飞书会话 | `feishu-owner-` | 全部权限 |
+| 主对话（每群一个） | `feishu-` | 只判断与派活，不跑命令；读限项目工作区 |
+| 任务执行体 | `feishu-task-` | 能写、能跑命令，但路径限**项目工作区 + 技能目录**；凭证类一律拦 |
+| 你自己的 Web 会话 | 其他 | 完全不受影响 |
 
-`feishu-` 前缀以外的会话（也就是你自己的 Web 会话）完全不受影响。
+`FEISHU_ALLOWED_USERS` 留空 = 所有人可 @；`FEISHU_OWNER_USERS` 决定谁拿到完整权限。
 
 ## 开发
 
