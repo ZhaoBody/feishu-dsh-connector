@@ -24,6 +24,8 @@ export interface InboundMessage {
   readonly text: string;
   readonly chatType: 'group' | 'p2p';
   readonly messageId: string;
+  /** 被引用的原消息 id（飞书事件里的 parent_id）；没有引用时缺省。 */
+  readonly replyToMessageId?: string;
   /** 消息是否带附件（图片/文件/音视频）。纯附件消息的 text 为空。 */
   readonly hasAttachments?: boolean;
   /** 已下载的入站图片。 */
@@ -35,12 +37,14 @@ export interface InboundMessage {
 }
 
 /** 一条消息的处置意图。 */
-export type RouteIntent = 'chat' | 'task' | 'interrupt';
+export type RouteIntent = 'chat' | 'task' | 'interrupt' | 'recall';
 
 /** 分拣结果。`reason` 只用于日志与排障，不参与业务判断。 */
 export interface RouteDecision {
   readonly intent: RouteIntent;
   readonly key: ActorKey;
+  /** 撤回条数（仅 intent='recall' 时有意义）。 */
+  readonly count?: number;
   readonly reason: string;
 }
 
@@ -68,6 +72,24 @@ const ACTION_PATTERNS: readonly RegExp[] = [
 const REFERENCE_PATTERN = /(?:这个|那个|刚才|上面|前面|之前那|上一条|上一|刚才那)/;
 
 /**
+/**
+ * 撤回指令：整句就是让人撤消息，不是聊天内容。
+ *
+ * 撤回是明确动作，走规则比让模型判断更可靠，也省一次推理。
+ */
+const RECALL_PATTERN = /(?:^|\s)(?:撤回|收回|撤销|删掉|删了)(?:一下|下|掉)?\s*(?:这|那)?\s*(?:[0-9一二两三四五]+\s*)?(?:条|个)?\s*(?:消息)?\s*$/;
+
+/** 从撤回指令里取要撤几条，缺省 1，上限 5。 */
+function recallCount(text: string): number {
+  const match = /([0-9]+|[一二两三四五])\s*(?:条|个)/.exec(text);
+  if (match === null) return 1;
+  const raw = match[1] ?? '1';
+  const map: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5 };
+  const value = /^[0-9]+$/.test(raw) ? Number(raw) : (map[raw] ?? 1);
+  return Math.min(Math.max(value, 1), 5);
+}
+
+/**
  * 纯闲聊白名单：整句命中才留在主会话。
  *
  * 用「整句匹配」而不是包含匹配——「谢谢，帮我改一下」不该被当成闲聊。
@@ -90,6 +112,16 @@ const CHITCHAT_MAX_LENGTH = 12;
 export function route(message: InboundMessage): RouteDecision {
   const text = message.text.trim();
   const speakerKey = actorKeyOf(message.chatId, message.senderOpenId);
+
+  // 撤回优先于一切：它是明确的动作指令，不该被当成闲聊或任务。
+  if (RECALL_PATTERN.test(text)) {
+    return {
+      intent: 'recall',
+      key: speakerKey,
+      reason: `撤回指令（${recallCount(text)} 条）`,
+      count: recallCount(text),
+    };
+  }
 
   for (const pattern of INTERRUPT_PATTERNS) {
     if (pattern.test(text)) {

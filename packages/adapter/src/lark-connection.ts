@@ -259,8 +259,11 @@ export class LarkConnection {
     }
 
     const { images, files, errors } = await this.collectAttachments(message);
+    // 引用关系：SDK 已经归一化成 replyToMessageId，撤回要按它定位。
+    const replyToMessageId = message.replyToMessageId;
     const inbound: InboundMessage = {
       messageId: message.messageId,
+      ...(typeof replyToMessageId === 'string' && replyToMessageId.length > 0 ? { replyToMessageId } : {}),
       chatId: message.chatId,
       chatType: message.chatType === 'group' ? 'group' : 'p2p',
       senderOpenId: message.senderId,

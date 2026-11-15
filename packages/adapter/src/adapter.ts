@@ -160,6 +160,11 @@ export class FeishuAdapter {
       return;
     }
 
+    if (decision.intent === 'recall') {
+      await this.handleRecall(message, decision.count ?? 1);
+      return;
+    }
+
     if (decision.intent === 'interrupt') {
       await this.handleInterrupt(message, decision);
       return;
@@ -321,6 +326,45 @@ export class FeishuAdapter {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * 撤回：按条数撤该会话最近几条出站消息。
+   *
+   * 为什么不让模型做：撤回是确定的动作，规则命中就直接执行，不再耗一次推理，
+   * 也避免模型「口头说撤了但实际没撤」。
+   */
+  private async handleRecall(message: InboundMessage, count: number): Promise<void> {
+    const recalled: string[] = [];
+
+    // 引用了具体消息：优先撤被引用的那条（用户指向很明确）。
+    if (message.replyToMessageId !== undefined) {
+      const target = await this.recall(message.chatId, message.replyToMessageId);
+      if (target.ok) recalled.push(target.messageId ?? '');
+      else {
+        const why =
+          target.reason === 'forbidden'
+            ? '那条不是我发的，撤不了'
+            : target.reason === 'expired'
+              ? '那条已经超过可撤回时限'
+              : '没找到那条消息';
+        await this.send(message.chatId, message.messageId, `撤回失败：${why}。`, 'text');
+        return;
+      }
+    } else {
+      // 没引用：撤该会话里机器人最近发出的 count 条。
+      for (let index = 0; index < count; index += 1) {
+        const result = await this.recall(message.chatId);
+        if (!result.ok) break;
+        recalled.push(result.messageId ?? '');
+      }
+    }
+
+    const text =
+      recalled.length > 0
+        ? `已撤回 ${recalled.length} 条消息。`
+        : '没有可撤回的消息（可能已超时或不是我发的）。';
+    await this.send(message.chatId, message.messageId, text, 'text');
   }
 
   /** 中断只作用于说话人自己的执行体，并在回执里说清楚。 */
