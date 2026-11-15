@@ -52,6 +52,8 @@ export interface FeishuAdapterOptions {
   readonly now?: () => number;
   /** 卡片 patch 最小间隔，默认 400ms。 */
   readonly cardThrottleMs?: number;
+  /** 超过这个毫秒数仍未出结果就先发一句「正在处理」，默认 15000；设 0 关闭。 */
+  readonly slowNoticeMs?: number;
   /**
    * 允许使用机器人的用户 open_id 列表；缺省表示不限。
    *
@@ -74,6 +76,7 @@ export class FeishuAdapter {
   private readonly logger: AdapterLogger;
   private readonly now: () => number;
   private readonly cardThrottleMs: number;
+  private readonly slowNoticeMs: number;
   private readonly allowedUsers: readonly string[] | undefined;
   private readonly liveCards = new Set<StreamingCard>();
   /** 已经注入过角色说明的主对话（每个 chat 一次）。 */
@@ -89,6 +92,7 @@ export class FeishuAdapter {
     this.now = options.now ?? (() => Date.now());
     this.logger = options.logger ?? { info: () => {}, warn: () => {} };
     this.cardThrottleMs = options.cardThrottleMs ?? 400;
+    this.slowNoticeMs = options.slowNoticeMs ?? 15_000;
     this.allowedUsers = options.allowedUsers;
     this.recallService = new RecallService(this.connection, this.outbound, { now: this.now });
   }
@@ -201,19 +205,39 @@ export class FeishuAdapter {
   private async handleMainActor(message: InboundMessage, decision: RouteDecision): Promise<void> {
     const collector = new ReplyCollector();
     const startedAt = this.now();
+    // 模型可能想几十秒甚至超时重试；超过阈值先吱一声，免得用户以为消息没进来。
+    let noticed = false;
+    const noticeTimer =
+      this.slowNoticeMs > 0
+        ? setTimeout(() => {
+            noticed = true;
+            void this.send(message.chatId, message.messageId, '收到，正在处理，稍等一下喵…', 'text').catch(
+              (error: unknown) => this.logger.warn(`处理中提示发送失败：${String(error)}`),
+            );
+          }, this.slowNoticeMs)
+        : undefined;
+    noticeTimer?.unref?.();
     let text = this.composeText(message);
     // 每个主对话首次交互时注入角色说明，之后它记住了。
     if (!this.briefed.has(message.chatId)) {
       this.briefed.add(message.chatId);
       text = `${mainActorBrief()}\n\n---\n\n${text}`;
     }
-    const result = await this.executor.run(
-      decision.key,
-      {
-        text,
-        ...(message.images !== undefined ? { images: message.images } : {}),
-      },
-      { emit: (event: ExecutorEvent) => collector.onEvent(event) },
+    let result;
+    try {
+      result = await this.executor.run(
+        decision.key,
+        {
+          text,
+          ...(message.images !== undefined ? { images: message.images } : {}),
+        },
+        { emit: (event: ExecutorEvent) => collector.onEvent(event) },
+      );
+    } finally {
+      if (noticeTimer !== undefined) clearTimeout(noticeTimer);
+    }
+    this.logger.info(
+      noticed ? `执行 key=${decision.key}（已发处理中提示）ok=${result.ok}` : `执行 key=${decision.key} ok=${result.ok}`,
     );
     this.logger.info(
       `执行 key=${decision.key} ok=${result.ok} 耗时=${this.now() - startedAt}ms 长度=${result.text.length}`,
