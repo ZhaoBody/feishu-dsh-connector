@@ -11,7 +11,7 @@ import { route, type InboundMessage, type RouteDecision } from './message-router
 import type { MessageHandler } from './lark-connection.ts';
 import type { OutboundKind, OutboundRegistry } from './outbound-registry.ts';
 import { RecallService, type RecallResult } from './recall-service.ts';
-import { mainActorBrief, parseSpawn } from './dispatch.ts';
+import { claimsSpawn, mainActorBrief, parseSpawn } from './dispatch.ts';
 import { ReplyCollector } from './reply-renderer.ts';
 import type { CardTransport } from './streaming-card.ts';
 import { StreamingCard } from './streaming-card.ts';
@@ -258,6 +258,19 @@ export class FeishuAdapter {
     for (const task of parsed.tasks) {
       this.logger.info(`主对话派活：${task.slice(0, 60)}`);
       this.spawnTask(message.chatId, decision.key, task);
+    }
+
+    // 兜底：回复里声称派了活，却没有标记 → 实际什么都没发生。
+    // 不给用户留一个「等一个不存在的结果」的状态，当场说清楚。
+    if (parsed.tasks.length === 0 && claimsSpawn(result.text)) {
+      this.logger.warn(`主对话声称派活但没有标记（session=${decision.key}）`);
+      // 正文仍由哨兵投递；这里只追加一条独立的补充说明，避免重复发送同一条。
+      await this.send(
+        message.chatId,
+        message.messageId,
+        '补充说明：刚才那条提到「已派出」，但实际没有生成可执行的任务，所以不会有后续结果。需要真执行的话请再说一次，我会真正派出去。',
+        'text',
+      );
     }
   }
 
