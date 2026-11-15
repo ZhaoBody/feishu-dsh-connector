@@ -203,6 +203,20 @@ export class LarkConnection {
    * 是否「本机器人发出」由调用方的出站登记表判断；这里只负责调接口，
    * 失败直接抛出（错误必须可溯源，不吞）。
    */
+  /**
+   * 给一条消息加表情回应（表示「已收到」）。
+   *
+   * 飞书要求应用有 `im:message.reaction` 权限；没有权限时这里会抛错，调用方按
+   * 「非关键路径」处理——表情失败不能影响消息处理本身。
+   */
+  async addReaction(messageId: string, emojiType = 'OK'): Promise<void> {
+    const channel = this.requireChannel();
+    await channel.rawClient.im.v1.messageReaction.create({
+      path: { message_id: messageId },
+      data: { reaction_type: { emoji_type: emojiType } },
+    });
+  }
+
   async recallMessage(messageId: string): Promise<void> {
     const channel = this.requireChannel();
     await channel.recallMessage(messageId);

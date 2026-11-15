@@ -27,6 +27,8 @@ export interface ConnectionPort extends CardTransport {
   disconnect(): Promise<void>;
   /** 往群里发一条新消息（不挂回复关系），返回 message id。 */
   sendText(chatId: string, text: string): Promise<string>;
+  /** 给消息加表情回应；不支持可缺省。 */
+  addReaction?(messageId: string, emojiType?: string): Promise<void>;
   /** 回复一条消息，返回新消息的 message id（用于登记出站记录）。 */
   replyText(chatId: string, messageId: string, text: string): Promise<string>;
   /** 撤回一条消息；失败抛错。 */
@@ -171,7 +173,23 @@ export class FeishuAdapter {
       );
     }
 
+    await this.react(message.messageId);
     await this.handleMainActor(message, decision);
+  }
+
+  /**
+   * 给收到的消息打个表情，表示「已收到」。
+   *
+   * 模型可能要想十几秒甚至超时，没有这个反馈用户会以为消息没送进来。
+   * 失败只记日志：缺 `im:message.reaction` 权限时不该阻断正常流程。
+   */
+  private async react(messageId: string): Promise<void> {
+    if (this.connection.addReaction === undefined) return;
+    try {
+      await this.connection.addReaction(messageId);
+    } catch (error) {
+      this.logger.warn(`表情回应失败（可能缺 im:message.reaction 权限）：${String(error)}`);
+    }
   }
 
   /**
