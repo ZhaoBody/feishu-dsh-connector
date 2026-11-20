@@ -98,7 +98,7 @@ export class SubagentCollector {
         if (parent === undefined || !mains.has(parent)) continue;
         const asOf = child.projections?.asOfSeq ?? 0;
         if (asOf <= (this.delivered[child.sessionId] ?? 0)) continue;
-        const result = await this.readResult(child.sessionId, asOf);
+        const result = await this.readResult(child.sessionId, parent, asOf);
         if (result === undefined) continue;
         await this.injectIntoParent(parent, result);
         this.delivered[child.sessionId] = asOf;
@@ -113,9 +113,15 @@ export class SubagentCollector {
   }
 
   /** 取子会话里最后一个回合的助手文本；没有完成回合时返回 undefined。 */
-  private async readResult(sessionId: string, asOf: number): Promise<string | undefined> {
+  private async readResult(sessionId: string, parentSessionId: string, asOf: number): Promise<string | undefined> {
+    // 子代理会话必须用 subagent 形式的持久地址，普通 {kind:'session'} 会被拒
+    // （实测：session/agent-busy — subagent Sessions require their durable parent address）。
     const page = await this.config.rpc.call<{ records: readonly PageRecord[] }>('session/page', {
-      request: { address: { kind: 'session', sessionId }, throughSeq: asOf, maxMessages: 40 },
+      request: {
+        address: { kind: 'subagent', parentSessionId, childSessionId: sessionId, mode: 'unknown' },
+        throughSeq: asOf,
+        maxMessages: 40,
+      },
     });
     const records = page.records ?? [];
     const hasTurnEnd = records.some((record) => record.event?.type === 'turn/end');
