@@ -37,7 +37,12 @@ const DEFAULTS = {
   sessionPrefix: 'feishu-',
   /** 可信范围：这些 session 完全放行（白名单用户自己的飞书会话）。 */
   trustedPrefix: 'feishu-owner-',
-  /** 任务执行体：允许写与执行命令，但路径仍限制在允许范围内。 */
+  /**
+   * 历史任务前缀：早期自造派活用 root session 时产生，允许写与执行命令。
+   *
+   * 现在派活走原生 subagent（权限沿 parent 继承），新会话不再有这个前缀；
+   * 保留是为了唤醒旧任务会话时行为一致。
+   */
   taskPrefix: 'feishu-task-',
 };
 

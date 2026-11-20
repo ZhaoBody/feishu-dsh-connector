@@ -176,8 +176,6 @@ export class HttpExecutor implements Executor {
    */
   private mintSessionId(key: ActorKey): string {
     const suffix = key.split('::')[1] ?? '';
-    // 派活出来的执行体要真能干活（跑命令、写文件），前缀单独区分。
-    if (suffix.startsWith('__task-')) return `feishu-task-${randomUUID().slice(0, 8)}`;
     const isOwner = this.config.ownerOpenIds?.includes(suffix) ?? false;
     return `${isOwner ? 'feishu-owner-' : 'feishu-'}${randomUUID().slice(0, 8)}`;
   }
