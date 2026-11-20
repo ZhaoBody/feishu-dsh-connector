@@ -15,6 +15,7 @@ import {
   MainWatcher,
   OutboundRegistry,
   SendApi,
+  SubagentCollector,
 } from '@feishu-assistant/feishu-adapter';
 import { createHttpExecutor, WebRpcClient } from '@feishu-assistant/dsh-executor';
 
@@ -104,6 +105,21 @@ async function main(): Promise<void> {
   });
   watcher.start();
 
+  // 子任务完成回流：原生 subagent 的完成通知只进 inbox、不会自己开新回合，
+  // 所以由这里把结果投回主对话，让它转述（转述再由哨兵投递到群）。
+  const collector = new SubagentCollector({
+    rpc: new WebRpcClient({
+      baseUrl: process.env.DSH_WEB_URL ?? 'http://127.0.0.1:3080',
+      ...(process.env.DSH_AUTH_FILE !== undefined ? { tokenFile: process.env.DSH_AUTH_FILE } : {}),
+      logger,
+    }),
+    actorsFile: join(executorDir, 'actors.json'),
+    stateFile: join(executorDir, 'collector.json'),
+    intervalMs: 3_000,
+    logger,
+  });
+  collector.start();
+
   // 本地发送接口：任何脚本/定时任务都能往群里发（默认只绑回环）。
   const sendApi = new SendApi({
     port: Number(process.env.FEISHU_SEND_PORT ?? 3090),
@@ -117,6 +133,7 @@ async function main(): Promise<void> {
     console.error(`[bridge] 收到 ${signal}，正在关闭`);
     try {
       watcher.stop();
+      collector.stop();
       await sendApi.stop();
       await adapter.stop();
       await logger.flush();

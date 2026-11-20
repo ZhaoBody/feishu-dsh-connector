@@ -20,6 +20,8 @@ export type { FileLogger, FileLoggerOptions, LogLevel } from './file-logger.ts';
 export { ReplyCollector, formatFailure } from './reply-renderer.ts';
 export { MainWatcher } from './main-watcher.ts';
 export type { MainWatcherConfig, WatcherRpc } from './main-watcher.ts';
+export { SubagentCollector } from './subagent-collector.ts';
+export type { SubagentCollectorConfig, CollectorRpc } from './subagent-collector.ts';
 export { SendApi } from './send-api.ts';
 export type { SendApiConfig, SendFunction } from './send-api.ts';
 export { mainActorBrief } from './dispatch.ts';
