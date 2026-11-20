@@ -267,6 +267,9 @@ export class LarkConnection {
       chatId: message.chatId,
       chatType: message.chatType === 'group' ? 'group' : 'p2p',
       senderOpenId: message.senderId,
+      ...(typeof message.senderName === 'string' && message.senderName.length > 0
+        ? { senderName: message.senderName }
+        : {}),
       text,
       hasAttachments,
       ...(images.length > 0 ? { images } : {}),

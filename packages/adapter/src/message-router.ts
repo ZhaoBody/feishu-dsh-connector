@@ -21,6 +21,8 @@ export interface InboundFile {
 export interface InboundMessage {
   readonly chatId: string;
   readonly senderOpenId: string;
+  /** 发送者显示名（飞书昵称）；没有时靠 open_id 区分。 */
+  readonly senderName?: string;
   readonly text: string;
   readonly chatType: 'group' | 'p2p';
   readonly messageId: string;

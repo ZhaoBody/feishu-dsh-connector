@@ -313,11 +313,17 @@ export class FeishuAdapter {
    */
   private composeText(message: InboundMessage): string {
     const files = message.files ?? [];
-    if (files.length === 0) return message.text;
-    const note = files
-      .map((file) => `[用户发送的文件：${file.name}（${file.bytes} 字节），已保存到 ${file.path}]`)
-      .join('\n');
-    return message.text.trim().length > 0 ? `${note}\n\n${message.text}` : note;
+    const note =
+      files.length === 0
+        ? ''
+        : files
+            .map((file) => `[用户发送的文件：${file.name}（${file.bytes} 字节），已保存到 ${file.path}]`)
+            .join('\n');
+    const body = message.text.trim().length > 0 ? message.text : '';
+    // 群里多人共用一个主对话：必须标出发送者，否则它会把这个人的话当成主人的。
+    const who = message.senderName ?? message.senderOpenId;
+    const head = message.chatType === 'group' ? `[群成员 ${who} 说]` : `[私聊 ${who} 说]`;
+    return [head, note, body].filter((part) => part.length > 0).join('\n');
   }
 
   /** 回复并登记出站记录：没有登记就没有撤回权。 */
