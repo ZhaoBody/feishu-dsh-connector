@@ -10,8 +10,6 @@
 
 import { readFileSync, writeFileSync } from 'node:fs';
 
-import { parseSpawn } from './dispatch.ts';
-
 /** 只需要 RPC 的 call 能力，不依赖 executor 包的具体类型。 */
 export interface WatcherRpc {
   call<T = unknown>(endpoint: string, args?: Record<string, unknown>): Promise<T>;
@@ -134,8 +132,7 @@ export class MainWatcher {
       if (event?.type === 'turn/end') hasTurnEnd = true;
     }
     if (!hasTurnEnd || text.length === 0) return;
-    // 主对话的回复里可能带派活标记：发给群之前剔掉。
-    const visible = parseSpawn(text).text;
+    const visible = text;
     if (visible.length === 0) return;
     this.logger.info?.(`哨兵发送 chat=${chatId} seq=${toSeq} 长度=${visible.length}`);
     await this.config.onMessage(chatId, visible);

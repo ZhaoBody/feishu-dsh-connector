@@ -108,6 +108,30 @@ describe('工具拦截（只对飞书会话）', () => {
     assert.equal((await call(handlers, 'read', { path: '/home/u/Desktop/private.md' }, 'feishu-task-abc')).kind, 'deny');
   });
 
+  it('子代理沿 parent 继承 owner 权限', async () => {
+    const { ctx, handlers } = makeCtx();
+    apply(ctx);
+    // 子代理 session 是 UUID，但父会话是 feishu-owner- → 完全放行
+    const childSession = { id: 'dbaca48c-36b8-4e7b-9147-6e49507fa8e0', header: { parentSession: 'feishu-owner-abc12345' } };
+    const handler = handlers['tools/pre-execute'];
+    const decide = (tool, args) =>
+      handler({ name: tool, arguments: args, agent: { session: childSession } }, async () => ({ kind: 'allow' }));
+    assert.equal((await decide('bash', { command: 'ls /srv/project' })).kind, 'allow');
+    assert.equal((await decide('write', { path: '/home/u/.bashrc' })).kind, 'allow');
+  });
+
+  it('子代理沿 parent 继承受限会话的只读限制', async () => {
+    const { ctx, handlers } = makeCtx();
+    apply(ctx);
+    // 父会话是普通 feishu-（同事的）→ 子代理仍然受限
+    const childSession = { id: 'a1b2c3d4-0000-0000-0000-000000000000', header: { parentSession: 'feishu-1234abcd' } };
+    const handler = handlers['tools/pre-execute'];
+    const decide = (tool, args) =>
+      handler({ name: tool, arguments: args, agent: { session: childSession } }, async () => ({ kind: 'allow' }));
+    assert.equal((await decide('bash', { command: 'echo hi' })).kind, 'deny');
+    assert.equal((await decide('read', { path: '/home/u/.ssh/id_rsa' })).kind, 'deny');
+  });
+
   it('非飞书会话完全不受影响', async () => {
     const { ctx, handlers } = makeCtx();
     apply(ctx);

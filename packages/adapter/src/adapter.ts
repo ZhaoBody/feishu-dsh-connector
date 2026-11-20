@@ -11,7 +11,7 @@ import { route, type InboundMessage, type RouteDecision } from './message-router
 import type { MessageHandler } from './lark-connection.ts';
 import type { OutboundKind, OutboundRegistry } from './outbound-registry.ts';
 import { RecallService, type RecallResult } from './recall-service.ts';
-import { claimsSpawn, mainActorBrief, parseSpawn } from './dispatch.ts';
+import { mainActorBrief } from './dispatch.ts';
 import { ReplyCollector } from './reply-renderer.ts';
 import type { CardTransport } from './streaming-card.ts';
 import { StreamingCard } from './streaming-card.ts';
@@ -81,7 +81,6 @@ export class FeishuAdapter {
   private readonly liveCards = new Set<StreamingCard>();
   /** 已经注入过角色说明的主对话（每个 chat 一次）。 */
   private readonly briefed = new Set<string>();
-  private taskSeq = 0;
   private unbind: (() => void) | undefined;
   private started = false;
 
@@ -254,56 +253,7 @@ export class FeishuAdapter {
       return;
     }
 
-    const parsed = parseSpawn(result.text);
-    for (const task of parsed.tasks) {
-      this.logger.info(`主对话派活：${task.slice(0, 60)}`);
-      this.spawnTask(message.chatId, decision.key, task);
-    }
-
-    // 兜底：回复里声称派了活，却没有标记 → 实际什么都没发生。
-    // 不给用户留一个「等一个不存在的结果」的状态，当场说清楚。
-    if (parsed.tasks.length === 0 && claimsSpawn(result.text)) {
-      this.logger.warn(`主对话声称派活但没有标记（session=${decision.key}）`);
-      // 正文仍由哨兵投递；这里只追加一条独立的补充说明，避免重复发送同一条。
-      await this.send(
-        message.chatId,
-        message.messageId,
-        '补充说明：刚才那条提到「已派出」，但实际没有生成可执行的任务，所以不会有后续结果。需要真执行的话请再说一次，我会真正派出去。',
-        'text',
-      );
-    }
-  }
-
-  /**
-   * 派活：另开无状态会话执行，完成后把结果注回主对话再回复用户。
-   *
-   * 不阻塞接入层——主对话派完就能接下一句话。
-   */
-  private spawnTask(chatId: string, mainKey: ActorKey, task: string): void {
-    const taskKey = `${chatId}::__task-${++this.taskSeq}` as ActorKey;
-    void (async () => {
-      try {
-        this.logger.info(`派活开始 task=${taskKey}`);
-        const collector = new ReplyCollector();
-        const result = await this.executor.run(taskKey, { text: task }, {
-          emit: (event: ExecutorEvent) => collector.onEvent(event),
-        });
-        const outcome = result.ok ? result.text : `执行失败：${result.text}`;
-        this.logger.info(`派活完成 task=${taskKey} ok=${result.ok} 长度=${outcome.length}`);
-        // 结果注回主对话：它持记忆，由它决定怎么转述给用户。
-        const followup = new ReplyCollector();
-        const injected = await this.executor.run(
-          mainKey,
-          { text: `【执行体回报】任务：${task}\n结果：${outcome}` },
-          { emit: (event: ExecutorEvent) => followup.onEvent(event) },
-        );
-        // 结果已经注回主对话，投递由哨兵统一负责。
-        this.logger.info(`派活结果已回注主对话 task=${taskKey} ok=${injected.ok}`);
-      } catch (error) {
-        // 派活是后台任务，异常必须落日志，否则会出现「派出去了但永远没回音」。
-        this.logger.warn(`派活失败 task=${taskKey}：${error instanceof Error ? error.message : String(error)}`);
-      }
-    })();
+    // 回复正文由哨兵统一投递；派活现在由主对话直接调用原生 subagent 工具完成。
   }
 
   /**

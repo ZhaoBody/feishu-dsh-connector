@@ -22,6 +22,5 @@ export { MainWatcher } from './main-watcher.ts';
 export type { MainWatcherConfig, WatcherRpc } from './main-watcher.ts';
 export { SendApi } from './send-api.ts';
 export type { SendApiConfig, SendFunction } from './send-api.ts';
-export { mainActorBrief, parseSpawn } from './dispatch.ts';
-export type { ParsedReply } from './dispatch.ts';
+export { mainActorBrief } from './dispatch.ts';
 export type { ReplySnapshot } from './reply-renderer.ts';

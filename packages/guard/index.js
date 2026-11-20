@@ -100,6 +100,23 @@ export function apply(ctx, config = {}) {
     throw new Error('feishu-guard: sessionPrefix 不能为空');
   }
 
+  /**
+   * 找到这条调用真正归属的飞书会话。
+   *
+   * 主对话的 session id 带 feishu- 前缀；它派出的子代理是 UUID，
+   * 但 `header.parentSession` 指回父会话。沿这一层继承，权限才不会被子代理绕过。
+   *
+   * @returns 归属的飞书 session id；与飞书无关的会话返回 undefined。
+   */
+  function owningSession(session, opts) {
+    if (session === undefined || session === null) return undefined;
+    const own = String(session.id ?? '');
+    if (own.startsWith('feishu-')) return own;
+    const parent = session.header?.parentSession;
+    if (typeof parent === 'string' && parent.startsWith('feishu-')) return parent;
+    return undefined;
+  }
+
   /** 允许访问的根目录：项目工作区 + 技能目录（读文档要用）。 */
   function allowedRoots() {
     const workspaces = ctx.workspaceRegistry.list().map((workspace) => workspace.path);
@@ -114,9 +131,13 @@ export function apply(ctx, config = {}) {
   }
 
   ctx.on('tools/pre-execute', async (exec, next) => {
-    const sessionId = String(exec.agent?.session?.id ?? '');
-    // 白名单用户自己的飞书会话（feishu-owner- 前缀）完全放行。
-    if (sessionId.startsWith(options.trustedPrefix)) return next();
+    const session = exec.agent?.session;
+    // 子代理的 session 是 UUID，权限要沿 parent 链继承发起它的那个飞书会话。
+    // 否则同事派出的子代理会绕过所有限制。
+    const owning = owningSession(session, options);
+    if (owning === undefined) return next();
+    if (owning.startsWith(options.trustedPrefix)) return next();
+    const sessionId = owning;
     if (!sessionId.startsWith(options.sessionPrefix)) return next();
 
     const toolName = String(exec.name);
