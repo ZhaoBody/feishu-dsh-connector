@@ -1,8 +1,13 @@
 # feishu-adapter
 
-飞书助手的**接入层**：长连接、消息分拣、回复渲染。只认 `Executor` 契约（类型导入），不知道执行体是进程还是 session。
+飞书助手的**接入层**：长连接、消息分拣、回复渲染、投递与回流。只认 `Executor` 契约（类型导入），不知道执行体是进程还是 session。
 
 ## 职责
+
+- `MainWatcher`：盯主对话会话，新回复统一投递到群（飞书入口和 Web GUI 入口都走它）
+- `SubagentCollector`：原生 subagent 完成后不会自己开新回合，由它把结果投回主对话触发转述
+- `SendApi`：本地 HTTP 发送接口，任何进程都能往群里发
+- `dispatch.ts`：主对话的角色说明（注入每个群的主对话会话）
 
 - 飞书长连接与事件去重（交给 SDK 的 `safety.dedup`）
 - 把归一化消息转成内部 `InboundMessage`
