@@ -101,8 +101,9 @@ export class MainWatcher {
         const asOf = summary?.projections?.asOfSeq ?? 0;
         const last = this.cursor[chatId] ?? 0;
         if (asOf <= last) continue;
-        await this.deliver(chatId, sessionId, last, asOf);
-        this.cursor[chatId] = asOf;
+        const sent = await this.deliver(chatId, sessionId, last, asOf);
+        // 没发出去就停在这个游标上，下一轮重试——否则这条回复会永久丢失。
+        if (sent) this.cursor[chatId] = asOf;
       }
       this.saveState();
     } catch (error) {
@@ -113,8 +114,12 @@ export class MainWatcher {
     }
   }
 
-  /** 读某个会话的新回复并发出去。 */
-  private async deliver(chatId: string, sessionId: string, fromSeq: number, toSeq: number): Promise<void> {
+  /**
+   * 读某个会话的新回复并发出去。
+   *
+   * @returns 是否真的发出去了。没发出去时调用方**不能**推进游标，否则这条回复永久丢失。
+   */
+  private async deliver(chatId: string, sessionId: string, fromSeq: number, toSeq: number): Promise<boolean> {
     const page = await this.config.rpc.call<{ records: readonly PageRecord[] }>('session/page', {
       request: { address: { kind: 'session', sessionId }, throughSeq: toSeq, maxMessages: 50 },
     });
@@ -131,11 +136,12 @@ export class MainWatcher {
       }
       if (event?.type === 'turn/end') hasTurnEnd = true;
     }
-    if (!hasTurnEnd || text.length === 0) return;
+    if (!hasTurnEnd || text.length === 0) return false;
     const visible = text;
-    if (visible.length === 0) return;
+    if (visible.length === 0) return false;
     this.logger.info?.(`哨兵发送 chat=${chatId} seq=${toSeq} 长度=${visible.length}`);
     await this.config.onMessage(chatId, visible);
+    return true;
   }
 
   /** 读 actors.json 里的主对话映射。 */

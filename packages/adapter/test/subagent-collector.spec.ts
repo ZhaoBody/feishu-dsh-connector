@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 
-import { SubagentCollector } from '../src/subagent-collector.ts';
+import { SubagentCollector, type CollectorRpc } from '../src/subagent-collector.ts';
 
 /** 构造一个假 RPC，记录被调用的端点。 */
 function makeRpc(options: { sessions: unknown[]; records: unknown[] }) {
@@ -18,7 +18,7 @@ function makeRpc(options: { sessions: unknown[]; records: unknown[] }) {
       if (endpoint === 'session/prompt') return { accepted: true };
       return {};
     },
-  };
+  } as unknown as CollectorRpc & { calls: typeof calls };
 }
 
 /** 建一个临时 dir 写 actors/state。 */
